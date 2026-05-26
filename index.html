@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SB Surf</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #060f17;
+    color: #d8f0f7;
+    font-family: -apple-system, sans-serif;
+    max-width: 480px;
+    margin: 0 auto;
+    min-height: 100vh;
+    padding-bottom: 40px;
+  }
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse 80% 40% at 50% 100%, rgba(10,79,110,0.4) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  .wrap { position: relative; z-index: 1; }
+
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+    padding: 20px 18px 0;
+  }
+  .logo {
+    font-size: 34px;
+    font-weight: 900;
+    letter-spacing: 3px;
+    color: #d8f0f7;
+  }
+  .logo span { color: #29d9f5; }
+  .clock { font-family: monospace; font-size: 11px; color: rgba(216,240,247,0.4); text-align: right; }
+
+  .sec { padding: 14px 18px 6px; font-family: monospace; font-size: 9px; letter-spacing: 3px; color: rgba(216,240,247,0.25); text-transform: uppercase; }
+
+  /* OVERVIEW */
+  .ov-row { display: flex; gap: 8px; padding: 0 18px; overflow-x: auto; scrollbar-width: none; }
+  .ov-row::-webkit-scrollbar { display: none; }
+  .ov-chip {
+    flex-shrink: 0; min-width: 80px; padding: 10px 10px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid rgba(216,240,247,0.09);
+    border-radius: 6px; cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .ov-chip.active { border-color: #29d9f5; background: rgba(41,217,245,0.07); }
+  .ov-short { font-family: monospace; font-size: 9px; letter-spacing: 2px; color: rgba(216,240,247,0.45); margin-bottom: 4px; }
+  .ov-ht { font-size: 20px; font-weight: 800; color: #d8f0f7; line-height: 1; }
+  .ov-rt { font-family: monospace; font-size: 8px; margin-top: 3px; }
+
+  /* TABS */
+  .tabs { display: flex; gap: 6px; padding: 0 18px; overflow-x: auto; scrollbar-width: none; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab {
+    flex-shrink: 0; padding: 7px 13px;
+    border-radius: 4px; border: 1px solid rgba(216,240,247,0.1);
+    background: transparent; color: rgba(216,240,247,0.4);
+    font-size: 11px; font-weight: 700; letter-spacing: 1px;
+    cursor: pointer; white-space: nowrap;
+    transition: all 0.15s;
+  }
+  .tab.active { background: #29d9f5; color: #060f17; border-color: #29d9f5; }
+
+  /* CARD */
+  .card {
+    margin: 10px 18px 0;
+    background: rgba(255,255,255,0.035);
+    border: 1px solid rgba(216,240,247,0.09);
+    border-radius: 8px; overflow: hidden;
+  }
+
+  .card-head {
+    display: flex; justify-content: space-between; align-items: flex-start;
+    padding: 14px 16px 12px;
+    border-bottom: 1px solid rgba(216,240,247,0.07);
+  }
+  .spot-title { font-size: 22px; font-weight: 900; letter-spacing: 1px; }
+  .rating-pill {
+    font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+    padding: 4px 9px; border-radius: 3px;
+    border: 1px solid currentColor;
+  }
+
+  /* HERO */
+  .hero {
+    display: grid; grid-template-columns: auto 1fr;
+    gap: 0 16px; padding: 14px 16px 12px;
+    border-bottom: 1px solid rgba(216,240,247,0.07);
+  }
+  .wave-big { font-size: 58px; font-weight: 900; line-height: 1; letter-spacing: -1px; }
+  .wave-unit { font-size: 16px; color: rgba(216,240,247,0.4); }
+  .wave-human { font-family: monospace; font-size: 9px; color: rgba(216,240,247,0.4); margin-top: 3px; }
+  .swell-col { display: flex; flex-direction: column; justify-content: center; gap: 7px; }
+  .swell-row { display: flex; align-items: center; gap: 6px; }
+  .sw-l { font-family: monospace; font-size: 8px; color: rgba(216,240,247,0.3); width: 22px; }
+  .sw-v { font-family: monospace; font-size: 11px; color: #29d9f5; }
+  .sw-d { font-size: 9px; color: rgba(216,240,247,0.4); }
+
+  /* DATA GRID */
+  .dgrid { display: grid; grid-template-columns: 1fr 1fr 1fr; border-bottom: 1px solid rgba(216,240,247,0.07); }
+  .dcell { padding: 12px 14px; border-right: 1px solid rgba(216,240,247,0.07); }
+  .dcell:last-child { border-right: none; }
+  .dl { font-family: monospace; font-size: 8px; letter-spacing: 1.5px; color: rgba(216,240,247,0.3); text-transform: uppercase; margin-bottom: 4px; }
+  .dv { font-size: 18px; font-weight: 800; line-height: 1; }
+  .du { font-size: 10px; color: rgba(216,240,247,0.35); }
+  .ds { font-family: monospace; font-size: 9px; color: rgba(216,240,247,0.38); margin-top: 3px; }
+
+  /* TIDES */
+  .tides { padding: 12px 16px; border-bottom: 1px solid rgba(216,240,247,0.07); }
+  .tide-bar { position: relative; height: 24px; margin: 8px 0 10px; }
+  .tb-bg { position: absolute; bottom: 0; left: 0; right: 0; height: 3px; background: rgba(255,255,255,0.08); border-radius: 2px; }
+  .tb-fill { position: absolute; bottom: 0; left: 0; height: 3px; background: linear-gradient(90deg,#0a4f6e,#29d9f5); border-radius: 2px; }
+  .tb-dot { position: absolute; bottom: -2.5px; width: 8px; height: 8px; background: #29d9f5; border-radius: 50%; transform: translateX(-50%); box-shadow: 0 0 8px #29d9f5; }
+  .tide-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 7px; }
+  .tt { font-family: monospace; font-size: 9px; letter-spacing: 1px; }
+  .ttv { font-size: 15px; font-weight: 800; }
+  .tht { font-family: monospace; font-size: 10px; color: rgba(216,240,247,0.45); }
+
+  /* HOURLY */
+  .hourly { padding: 12px 16px; border-bottom: 1px solid rgba(216,240,247,0.07); }
+  .hscroll { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; }
+  .hscroll::-webkit-scrollbar { display: none; }
+  .hchip {
+    flex-shrink: 0; width: 58px; padding: 9px 0; text-align: center;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid rgba(216,240,247,0.07); border-radius: 4px;
+  }
+  .hchip.now { border-color: #29d9f5; background: rgba(41,217,245,0.06); }
+  .ht { font-family: monospace; font-size: 9px; color: rgba(216,240,247,0.35); margin-bottom: 4px; }
+  .hh { font-size: 15px; font-weight: 800; line-height: 1; margin-bottom: 3px; }
+  .hw { font-family: monospace; font-size: 8px; color: rgba(216,240,247,0.35); }
+  .hdot { width: 5px; height: 5px; border-radius: 50%; margin: 4px auto 0; }
+
+  /* LOADING */
+  .loading { padding: 40px; text-align: center; }
+  .spin {
+    width: 28px; height: 28px;
+    border: 2px solid rgba(41,217,245,0.15);
+    border-top-color: #29d9f5;
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    margin: 0 auto 12px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .spin-lbl { font-family: monospace; font-size: 10px; letter-spacing: 2px; color: rgba(216,240,247,0.3); }
+
+  .err { padding: 16px; font-family: monospace; font-size: 10px; color: #e05e3a; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">SB<span>·</span>SURF</div>
+    <div class="clock" id="clock"></div>
+  </header>
+
+  <div class="sec">Overview</div>
+  <div class="ov-row" id="ovRow"></div>
+
+  <div class="sec">Detail</div>
+  <div class="tabs" id="tabs"></div>
+
+  <div id="card"></div>
+</div>
+
+<script>
+const SPOTS = [
+  { name:"BRUCE'S",   short:"BRU", lat:33.8988, lon:-118.4152, noaa:"9410660" },
+  { name:"MAN PIER",  short:"MAN", lat:33.8843, lon:-118.4090, noaa:"9410660" },
+  { name:"HERMOSA",   short:"HER", lat:33.8619, lon:-118.4002, noaa:"9410660" },
+  { name:"RAT BEACH", short:"RAT", lat:33.8110, lon:-118.3942, noaa:"9410660" },
+  { name:"TOPAZ",     short:"TOP", lat:33.8412, lon:-118.3996, noaa:"9410660" },
+];
+
+let active = 0;
+let cache = {};
+
+function rc(r='') {
+  const l = r.toLowerCase();
+  if (l.includes('epic')) return '#29d9f5';
+  if (l.includes('good')) return '#3dbe7a';
+  if (l.includes('fair')) return '#e8b84b';
+  return '#e05e3a';
+}
+
+function wdir(deg) {
+  if (deg==null) return '–';
+  return ['N','NE','E','SE','S','SW','W','NW'][Math.round(deg/45)%8];
+}
+
+function humanHt(m) {
+  if (m < 0.5) return 'ankle';
+  if (m < 0.9) return 'knee–thigh';
+  if (m < 1.4) return 'thigh–waist';
+  if (m < 1.8) return 'waist–chest';
+  if (m < 2.4) return 'chest–head';
+  if (m < 3.0) return 'overhead';
+  return 'double+';
+}
+
+function mToFt(m) { return (m * 3.28084).toFixed(1); }
+function msToKt(ms) { return Math.round(ms * 1.94384); }
+
+function ratingFromData(waveHt, period, windSpd) {
+  // Simple quality heuristic
+  const htFt = waveHt * 3.28084;
+  const windKt = windSpd * 1.94384;
+  if (htFt < 0.5) return 'FLAT';
+  if (windKt > 20) return 'POOR';
+  if (htFt >= 3 && period >= 12 && windKt < 8) return 'GOOD';
+  if (htFt >= 1.5 && period >= 10 && windKt < 12) return 'FAIR TO GOOD';
+  if (htFt >= 1 && period >= 8) return 'FAIR';
+  if (windKt > 15) return 'POOR TO FAIR';
+  return 'POOR';
+}
+
+function tick() {
+  const n = new Date();
+  document.getElementById('clock').innerHTML =
+    n.toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'}) + '<br>' +
+    n.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit'});
+}
+tick(); setInterval(tick, 30000);
+
+// Build tabs & overview chips
+const tabsEl = document.getElementById('tabs');
+const ovEl = document.getElementById('ovRow');
+
+SPOTS.forEach((s,i) => {
+  const t = document.createElement('button');
+  t.className = 'tab' + (i===0?' active':'');
+  t.textContent = s.name;
+  t.onclick = () => select(i);
+  tabsEl.appendChild(t);
+
+  const c = document.createElement('div');
+  c.className = 'ov-chip' + (i===0?' active':'');
+  c.id = 'ov-'+i;
+  c.innerHTML = `<div class="ov-short">${s.short}</div><div class="ov-ht" id="ovht-${i}"><span style="opacity:0.3;font-size:12px">···</span></div><div class="ov-rt" id="ovrt-${i}"></div>`;
+  c.onclick = () => select(i);
+  ovEl.appendChild(c);
+});
+
+async function fetchData(idx) {
+  if (cache[idx]) return cache[idx];
+  const s = SPOTS[idx];
+
+  // Open-Meteo Marine + Wind (no CORS, no key)
+  const marineUrl = `https://marine-api.open-meteo.com/v1/marine?latitude=${s.lat}&longitude=${s.lon}&hourly=wave_height,swell_wave_height,swell_wave_period,swell_wave_direction,wind_wave_height,wind_wave_period&wind_speed_unit=ms&length_unit=metric&timezone=America%2FLos_Angeles&forecast_days=2`;
+  const windUrl   = `https://api.open-meteo.com/v1/forecast?latitude=${s.lat}&longitude=${s.lon}&hourly=wind_speed_10m,wind_direction_10m,wind_gusts_10m&wind_speed_unit=ms&timezone=America%2FLos_Angeles&forecast_days=2`;
+  const tideUrl   = `https://api.tidesandcurrents.noaa.gov/api/prod/datagetter?station=${s.noaa}&product=predictions&datum=MLLW&time_zone=lst_ldt&interval=hilo&units=english&application=sb_surf&format=json&begin_date=${fmtDate(new Date())}&end_date=${fmtDate(tomorrow())}`;
+
+  const [mRes, wRes, tRes] = await Promise.allSettled([
+    fetch(marineUrl).then(r=>r.json()),
+    fetch(windUrl).then(r=>r.json()),
+    fetch(tideUrl).then(r=>r.json()),
+  ]);
+
+  cache[idx] = {
+    marine: mRes.status==='fulfilled' ? mRes.value : null,
+    wind:   wRes.status==='fulfilled' ? wRes.value : null,
+    tides:  tRes.status==='fulfilled' ? tRes.value : null,
+  };
+  return cache[idx];
+}
+
+function fmtDate(d) {
+  return d.getFullYear().toString() +
+    String(d.getMonth()+1).padStart(2,'0') +
+    String(d.getDate()).padStart(2,'0');
+}
+function tomorrow() { const d=new Date(); d.setDate(d.getDate()+1); return d; }
+
+function select(i) {
+  active = i;
+  document.querySelectorAll('.tab').forEach((t,j) => t.classList.toggle('active', j===i));
+  document.querySelectorAll('.ov-chip').forEach((c,j) => c.classList.toggle('active', j===i));
+  renderCard(i);
+}
+
+// load overview for all spots
+SPOTS.forEach(async (s, i) => {
+  try {
+    const d = await fetchData(i);
+    const h = d.marine?.hourly;
+    if (!h) return;
+    const nowIdx = getNowIdx(h.time);
+    const wh = h.wave_height[nowIdx] || 0;
+    const wp = h.swell_wave_period[nowIdx] || 0;
+    const ws = d.wind?.hourly?.wind_speed_10m?.[nowIdx] || 0;
+    const ftVal = mToFt(wh);
+    const rating = ratingFromData(wh, wp, ws);
+    document.getElementById('ovht-'+i).innerHTML = ftVal + '<span style="font-size:10px;color:rgba(216,240,247,0.35)">ft</span>';
+    const rtEl = document.getElementById('ovrt-'+i);
+    rtEl.textContent = rating;
+    rtEl.style.color = rc(rating);
+  } catch {}
+});
+
+function getNowIdx(times) {
+  const now = new Date().toISOString().slice(0,13);
+  let best = 0;
+  times.forEach((t,i) => { if (t.slice(0,13) <= now) best = i; });
+  return best;
+}
+
+async function renderCard(idx) {
+  const card = document.getElementById('card');
+  card.innerHTML = `<div class="card"><div class="loading"><div class="spin"></div><div class="spin-lbl">LOADING</div></div></div>`;
+
+  try {
+    const d = await fetchData(idx);
+    const s = SPOTS[idx];
+    const mh = d.marine?.hourly;
+    const wh = d.wind?.hourly;
+    const tides = d.tides?.predictions || [];
+
+    if (!mh) throw new Error('No marine data');
+
+    const nowIdx = getNowIdx(mh.time);
+    const waveHt  = mh.wave_height[nowIdx] || 0;
+    const swellHt = mh.swell_wave_height[nowIdx] || 0;
+    const swellPd = mh.swell_wave_period[nowIdx] || 0;
+    const swellDir= mh.swell_wave_direction[nowIdx];
+    const windSpd = wh?.wind_speed_10m?.[nowIdx] || 0;
+    const windDir2= wh?.wind_direction_10m?.[nowIdx];
+    const windGst = wh?.wind_gusts_10m?.[nowIdx] || 0;
+    const rating  = ratingFromData(waveHt, swellPd, windSpd);
+
+    // tides
+    const now = new Date();
+    const upcoming = tides.filter(t => new Date(t.t) > now).slice(0,4);
+    // tide bar: find surrounding hi/lo
+    const past = tides.filter(t => new Date(t.t) <= now);
+    const lastT = past[past.length-1];
+    const nextT = tides.find(t => new Date(t.t) > now);
+    let tidePct = 50;
+    if (lastT && nextT) {
+      const elapsed = (now - new Date(lastT.t));
+      const total   = (new Date(nextT.t) - new Date(lastT.t));
+      const frac    = elapsed / total;
+      const fromH   = parseFloat(lastT.v);
+      const toH     = parseFloat(nextT.v);
+      const curHt   = fromH + (toH - fromH) * frac;
+      const allV    = tides.map(t=>parseFloat(t.v));
+      const minV    = Math.min(...allV);
+      const maxV    = Math.max(...allV);
+      tidePct       = Math.min(100,Math.max(0,(curHt-minV)/(maxV-minV)*100));
+    }
+
+    // hourly (next 8 slots)
+    const hourSlots = [];
+    for (let i = nowIdx; i < Math.min(nowIdx+8, mh.time.length); i++) {
+      hourSlots.push({
+        time: mh.time[i],
+        waveHt: mh.wave_height[i] || 0,
+        swPd:   mh.swell_wave_period[i] || 0,
+        windSpd:wh?.wind_speed_10m?.[i] || 0,
+        windDir:wh?.wind_direction_10m?.[i],
+      });
+    }
+
+    const ftVal = mToFt(waveHt);
+    const swFt  = mToFt(swellHt);
+
+    card.innerHTML = `
+    <div class="card">
+      <div class="card-head">
+        <div>
+          <div class="spot-title">${s.name}</div>
+          <div style="font-family:monospace;font-size:9px;color:${rc(rating)};margin-top:4px;letter-spacing:1px">${rating}</div>
+        </div>
+        <div class="rating-pill" style="color:${rc(rating)}">${ftVal}ft</div>
+      </div>
+
+      <div class="hero">
+        <div>
+          <div class="wave-big">${ftVal}<span class="wave-unit">ft</span></div>
+          <div class="wave-human">${humanHt(waveHt)}</div>
+        </div>
+        <div class="swell-col">
+          ${swellHt > 0 ? `
+          <div class="swell-row">
+            <div class="sw-l">SWELL</div>
+            <div class="sw-v">${swFt}ft @ ${swellPd.toFixed(0)}s</div>
+            <div class="sw-d">${wdir(swellDir)}</div>
+          </div>` : ''}
+          <div class="swell-row">
+            <div class="sw-l">WIND</div>
+            <div class="sw-v">${msToKt(windSpd)}kt ${wdir(windDir2)}</div>
+            <div class="sw-d">${msToKt(windGst) > 0 ? 'gusts '+msToKt(windGst)+'kt':''}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dgrid">
+        <div class="dcell">
+          <div class="dl">WIND</div>
+          <div class="dv">${msToKt(windSpd)}<span class="du">kt</span></div>
+          <div class="ds">${wdir(windDir2)}</div>
+        </div>
+        <div class="dcell">
+          <div class="dl">PERIOD</div>
+          <div class="dv">${swellPd.toFixed(0)}<span class="du">s</span></div>
+          <div class="ds">${wdir(swellDir)}</div>
+        </div>
+        <div class="dcell">
+          <div class="dl">SWELL</div>
+          <div class="dv">${swFt}<span class="du">ft</span></div>
+          <div class="ds">${wdir(swellDir)}</div>
+        </div>
+      </div>
+
+      <div class="tides">
+        <div class="dl">TODAY'S TIDES</div>
+        <div class="tide-bar">
+          <div class="tb-bg"></div>
+          <div class="tb-fill" style="width:${tidePct}%"></div>
+          <div class="tb-dot" style="left:${tidePct}%"></div>
+        </div>
+        ${upcoming.map(t => {
+          const isH = t.type === 'H';
+          return `<div class="tide-row">
+            <div class="tt" style="color:${isH?'#29d9f5':'rgba(216,240,247,0.4)'}">${isH?'HIGH':'LOW'}</div>
+            <div class="ttv">${fmtTime(t.t)}</div>
+            <div class="tht">${parseFloat(t.v).toFixed(1)} ft</div>
+          </div>`;
+        }).join('') || '<div style="font-family:monospace;font-size:10px;color:rgba(216,240,247,0.3)">No tide data</div>'}
+      </div>
+
+      <div class="hourly">
+        <div class="dl">NEXT 24 HRS</div>
+        <div class="hscroll">
+          ${hourSlots.map((h,i) => {
+            const ft = mToFt(h.waveHt);
+            const r  = ratingFromData(h.waveHt, h.swPd, h.windSpd);
+            return `<div class="hchip ${i===0?'now':''}">
+              <div class="ht">${i===0?'NOW':fmtHour(h.time)}</div>
+              <div class="hh">${ft}ft</div>
+              <div class="hw">${msToKt(h.windSpd)}kt ${wdir(h.windDir)}</div>
+              <div class="hdot" style="background:${rc(r)}"></div>
+            </div>`;
+          }).join('')}
+        </div>
+      </div>
+    </div>`;
+
+  } catch(e) {
+    card.innerHTML = `<div class="card"><div class="err">⚠ ${e.message}</div></div>`;
+  }
+}
+
+function fmtTime(str) {
+  const d = new Date(str);
+  return d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:true});
+}
+
+function fmtHour(str) {
+  const d = new Date(str);
+  return d.toLocaleTimeString('en-US',{hour:'numeric',hour12:true});
+}
+
+renderCard(0);
+</script>
+</body>
+</html>
