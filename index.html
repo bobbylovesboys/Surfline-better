@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>SB Surf v14</title>
+<title>SB Surf v16</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
@@ -206,17 +206,23 @@
 // multiplier: how this spot's actual surf height compares to offshore model
 // based on local exposure, shadowing, submarine canyon effects etc.
 const SPOTS = [
-  { name:"BRUCE'S",   short:"BRU", slId:"61c376003cf37564c0eb8125", lat:33.8988, lon:-118.4152, mult:0.85 },
-  { name:"MAN PIER",  short:"MAN", slId:"5842041f4e65fad6a7708907", lat:33.8843, lon:-118.4090, mult:0.80 },
-  { name:"HERMOSA",   short:"HER", slId:"5b17281e4a274e001a11fcc3", lat:33.8619, lon:-118.4002, mult:0.82 },
-  { name:"RAT BEACH", short:"RAT", slId:"640a3f804eb375e33a945550", lat:33.8110, lon:-118.3942, mult:0.90 },
-  { name:"TOPAZ",     short:"TOP", slId:"584204214e65fad6a7709d0b", lat:33.8412, lon:-118.3996, mult:0.55 },
-  { name:"EL PORTO",  short:"POR", slId:"5842041f4e65fad6a7708906", lat:33.9020, lon:-118.4180, mult:0.95 },
+  { name:"BRUCE'S",   short:"BRU", lat:33.8988, lon:-118.4152, mult:0.85,
+    swellWindow:[200, 320], buoyOrder:["46221","46222"] },
+  { name:"MAN PIER",  short:"MAN", lat:33.8843, lon:-118.4090, mult:0.80,
+    swellWindow:[200, 320], buoyOrder:["46221","46222"] },
+  { name:"HERMOSA",   short:"HER", lat:33.8619, lon:-118.4002, mult:0.82,
+    swellWindow:[200, 320], buoyOrder:["46221","46222"] },
+  { name:"RAT BEACH", short:"RAT", lat:33.8110, lon:-118.3942, mult:0.90,
+    swellWindow:[180, 320], buoyOrder:["46222","46221"] },
+  { name:"TOPAZ",     short:"TOP", lat:33.8412, lon:-118.3996, mult:0.55,
+    swellWindow:[180, 240], buoyOrder:["46222","46221"] },
+  { name:"EL PORTO",  short:"POR", lat:33.9020, lon:-118.4180, mult:0.95,
+    swellWindow:[200, 320], buoyOrder:["46221","46222"] },
 ];
+const BUOYS = ["46221", "46222"];
 const NOAA_STATION = "9410660";
 
 let active = 0;
-const cache = {};
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
 function rc(r='') {
@@ -230,6 +236,93 @@ function rc(r='') {
 function wdir(deg) {
   if (deg==null) return '–';
   return ['N','NE','E','SE','S','SW','W','NW'][Math.round(deg/45)%8];
+}
+
+// ─── NDBC + cache (pure, tested in dump/test.html) ─────────────────────────
+const COMPASS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+function compassToDeg(s) {
+  const i = COMPASS.indexOf(s);
+  return i < 0 ? null : i * 22.5;
+}
+
+function parseSpec(text) {
+  if (!text) return null;
+  const lines = text.split(/\r?\n/);
+  let headerCols = null;
+  let dataRow = null;
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    if (line.startsWith('#')) {
+      if (!headerCols && /^#YY/.test(line)) {
+        headerCols = line.replace(/^#/, '').trim().split(/\s+/);
+      }
+      continue;
+    }
+    dataRow = line.trim().split(/\s+/);
+    break;
+  }
+  if (!headerCols || !dataRow) return null;
+  const col = name => {
+    const i = headerCols.indexOf(name);
+    return i < 0 ? null : dataRow[i];
+  };
+  const YY = +col('YY'), MM = +col('MM'), DD = +col('DD'), hh = +col('hh'), mm = +col('mm');
+  if ([YY,MM,DD,hh,mm].some(v => Number.isNaN(v))) return null;
+  const time = new Date(Date.UTC(YY, MM-1, DD, hh, mm)).toISOString();
+  const swH = parseFloat(col('SwH')), swP = parseFloat(col('SwP'));
+  const wwH = parseFloat(col('WWH')), wwP = parseFloat(col('WWP'));
+  const swD = compassToDeg(col('SwD')), wwD = compassToDeg(col('WWD'));
+  if ([swH,swP,wwH,wwP].some(v => Number.isNaN(v))) return null;
+  if (swD === null || wwD === null) return null;
+  return { time, swell:{h:swH, p:swP, d:swD}, windWave:{h:wwH, p:wwP, d:wwD} };
+}
+
+function withStale(v, staleAge) {
+  if (Array.isArray(v)) { const a = v.slice(); a.staleAge = staleAge; return a; }
+  return { ...v, staleAge };
+}
+async function cachedFetch(key, fn, ttlMs) {
+  const cacheKey = `sb_cache_${key}`;
+  const raw = localStorage.getItem(cacheKey);
+  let cached = null;
+  if (raw) {
+    try { cached = JSON.parse(raw); } catch (e) { cached = null; }
+  }
+  const now = Date.now();
+  if (cached && (now - cached.savedAt) < ttlMs) {
+    return withStale(cached.value, 0);
+  }
+  let fresh = null;
+  try { fresh = await fn(); } catch (e) { fresh = null; }
+  if (fresh) {
+    localStorage.setItem(cacheKey, JSON.stringify({ value: fresh, savedAt: now }));
+    return withStale(fresh, 0);
+  }
+  if (cached) {
+    const staleAge = (now - cached.savedAt) / 3600000;
+    return withStale(cached.value, staleAge);
+  }
+  return null;
+}
+
+function inWindow(deg, [lo, hi]) {
+  if (lo <= hi) return deg >= lo && deg <= hi;
+  return deg >= lo || deg <= hi;
+}
+function blendSwells(spot, readings) {
+  const valid = (readings || []).filter(r => r && r.swell && r.windWave);
+  const orderIdx = b => {
+    const i = spot.buoyOrder.indexOf(b);
+    return i < 0 ? 999 : i;
+  };
+  const pickBest = (kind) => {
+    const inWin = valid.filter(r => r[kind].h > 0 && inWindow(r[kind].d, spot.swellWindow));
+    if (!inWin.length) return null;
+    inWin.sort((a, b) => (b[kind].h - a[kind].h) || (orderIdx(a._buoy) - orderIdx(b._buoy)));
+    const top = inWin[0];
+    return { h: top[kind].h * spot.mult, p: top[kind].p, d: top[kind].d, srcBuoy: top._buoy };
+  };
+  return { primary: pickBest('swell'), windWave: pickBest('windWave') };
 }
 // South Bay faces WSW. Wind blowing FROM NE/E/N = offshore (good).
 // Wind blowing FROM W/SW/S = onshore (bad). SE/NW = cross-shore.
@@ -286,14 +379,18 @@ function getNowIdx(times) {
   }
   return best;
 }
-function ratingStr(waveM, periodS, windMs) {
-  const ft=waveM*3.28084, kt=windMs*1.94384;
-  if (ft<0.3) return 'FLAT';
-  if (kt>22)  return 'POOR';
-  if (ft>=3 && periodS>=12 && kt<8)  return 'GOOD';
-  if (ft>=2 && periodS>=10 && kt<10) return 'FAIR TO GOOD';
-  if (ft>=1 && periodS>=8  && kt<15) return 'FAIR';
-  if (kt>15)  return 'POOR TO FAIR';
+function ratingStr(waveM, periodS, windMs, windDirDeg) {
+  const ft = waveM * 3.28084, kt = windMs * 1.94384;
+  if (ft < 0.3) return 'FLAT';
+  const w = windLabel(windDirDeg, kt);
+  const effKt = w === 'OFFSHORE' || w === 'CALM' || w === 'LIGHT' ? Math.max(0, kt - 5)
+              : w === 'ONSHORE'                                   ? kt + 6
+              : /* CROSS-SHORE */                                   kt + 2;
+  if (effKt > 22) return 'POOR';
+  if (ft >= 3 && periodS >= 12 && effKt < 8)  return 'GOOD';
+  if (ft >= 2 && periodS >= 10 && effKt < 10) return 'FAIR TO GOOD';
+  if (ft >= 1 && periodS >= 8  && effKt < 15) return 'FAIR';
+  if (effKt > 15) return 'POOR TO FAIR';
   return 'POOR';
 }
 
@@ -310,35 +407,27 @@ function periodQualityColor(waveM, periodS) {
   return '#e05e3a';                               // poor — red
 }
 
-// ─── CORS PROXY FETCH ────────────────────────────────────────────────────────
-// Tries allorigins first, then corsproxy as fallback
-async function proxiedJSON(url) {
-  const encoded = encodeURIComponent(url);
-  // Try allorigins
+// ─── FETCH NDBC BUOY (.spec) ─────────────────────────────────────────────────
+const NDBC_PROXY = 'https://sb-surf-proxy.bobe20072007.workers.dev';
+async function fetchNDBC(stationId) {
+  const target = `https://www.ndbc.noaa.gov/data/realtime2/${stationId}.spec`;
+  const url = `${NDBC_PROXY}/?url=${encodeURIComponent(target)}`;
   try {
-    const r = await fetch(`https://api.allorigins.win/raw?url=${encoded}`, {signal: AbortSignal.timeout(6000)});
-    if (r.ok) return await r.json();
-  } catch {}
-  // Fallback: corsproxy.io
-  try {
-    const r = await fetch(`https://corsproxy.io/?url=${encoded}`, {signal: AbortSignal.timeout(6000)});
-    if (r.ok) return await r.json();
-  } catch {}
-  return null;
-}
-
-// ─── FETCH SURFLINE (via proxy) ───────────────────────────────────────────────
-async function fetchSurfline(spotId) {
-  const base = 'https://services.surfline.com/kbyg/spots/forecasts';
-  const p = `?spotId=${spotId}&days=2&intervalHours=3&cacheEnabled=true&units%5BswellHeight%5D=FT&units%5BwaveHeight%5D=FT&units%5BwindSpeed%5D=KTS&units%5BtideHeight%5D=FT`;
-  const [wave, cond] = await Promise.allSettled([
-    proxiedJSON(base+'/wave'+p),
-    proxiedJSON(base+'/conditions'+p),
-  ]);
-  return {
-    wave: wave.status==='fulfilled' ? wave.value : null,
-    cond: cond.status==='fulfilled' ? cond.value : null,
-  };
+    const r = await fetch(url, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) { console.warn('NDBC', stationId, 'HTTP', r.status); return null; }
+    const text = await r.text();
+    const parsed = parseSpec(text);
+    if (!parsed) { console.warn('NDBC', stationId, 'parse failed'); return null; }
+    const ageMs = Date.now() - new Date(parsed.time).getTime();
+    if (ageMs > 12 * 3600 * 1000) {
+      console.warn('NDBC', stationId, 'data >12h old, discarding');
+      return null;
+    }
+    return { ...parsed, _buoy: stationId };
+  } catch (e) {
+    console.warn('NDBC', stationId, 'fetch error', e.message);
+    return null;
+  }
 }
 
 // ─── FETCH OPEN-METEO (no CORS) ──────────────────────────────────────────────
@@ -361,20 +450,36 @@ async function fetchTides() {
 
 // ─── MASTER FETCH ─────────────────────────────────────────────────────────────
 async function fetchAll(idx) {
-  if (cache[idx]) return cache[idx];
   const s = SPOTS[idx];
-  const [sl, om, tides] = await Promise.allSettled([
-    fetchSurfline(s.slId),
-    fetchOpenMeteo(s.lat, s.lon),
-    fetchTides(),
+  const TTL_30M = 30 * 60 * 1000;
+  const TTL_6H  = 6  * 60 * 60 * 1000;
+
+  const buoyPromises = BUOYS.map(b =>
+    cachedFetch(`ndbc_${b}`, () => fetchNDBC(b), TTL_30M)
+  );
+  const [r21, r22, om, tides] = await Promise.all([
+    ...buoyPromises,
+    cachedFetch(`om_${idx}`, () => fetchOpenMeteo(s.lat, s.lon), TTL_30M),
+    cachedFetch('tides',     () => fetchTides(),                  TTL_6H),
   ]);
-  cache[idx] = {
-    sl:    sl.status==='fulfilled'    ? sl.value    : null,
-    om:    om.status==='fulfilled'    ? om.value    : null,
-    tides: tides.status==='fulfilled' ? tides.value : [],
+
+  const buoyReadings = [r21, r22].filter(Boolean);
+  const buoysOk = buoyReadings.length;
+  const blended = blendSwells(s, buoyReadings);
+
+  const stales = [r21, r22, om].filter(Boolean).map(x => x.staleAge || 0);
+  const staleAge = stales.length ? Math.max(...stales) : 0;
+
+  return {
+    primary:  blended.primary,
+    windWave: blended.windWave,
+    om,
+    tides: tides || [],
     mult:  s.mult,
+    buoysOk,
+    primaryBuoy: blended.primary ? blended.primary.srcBuoy : null,
+    staleAge,
   };
-  return cache[idx];
 }
 
 // ─── SKY COLOR (shifts through the day) ──────────────────────────────────────
@@ -506,33 +611,32 @@ SPOTS.forEach(async (s,i) => {
     const d = await fetchAll(i);
     let ftVal, rat;
 
-    // Prefer Surfline wave height
-    const slWaves = d.sl?.wave?.data?.wave;
-    if (slWaves?.length) {
-      const now=Date.now()/1000;
-      const cur=slWaves.reduce((a,b)=>Math.abs(b.timestamp-now)<Math.abs(a.timestamp-now)?b:a);
-      const ht=cur.surf;
-      ftVal=`${ht.min}–${ht.max}`;
-      rat = d.sl?.cond?.data?.conditions?.value || cur.surf.humanRelation || '';
+    if (d.primary && d.om?.wind?.hourly) {
+      const ftPrimary = d.primary.h * 3.28084;
+      ftVal = ftPrimary.toFixed(1);
+      const wh = d.om.wind.hourly;
+      const ni = getNowIdx(wh.time);
+      const ws = wh.wind_speed_10m?.[ni] || 0;
+      const wd = wh.wind_direction_10m?.[ni];
+      rat = ratingStr(d.primary.h, d.primary.p, ws, wd);
     } else if (d.om?.marine?.hourly) {
-      // Fallback: Open-Meteo with multiplier
-      const h=d.om.marine.hourly;
-      const idx2=getNowIdx(h.time);
-      const raw=h.wave_height[idx2]||0;
-      const adj=raw*d.mult;
-      ftVal=mToFt(adj);
-      const wp=h.swell_wave_period?.[idx2]||0;
-      const ws=d.om.wind?.hourly?.wind_speed_10m?.[idx2]||0;
-      rat=ratingStr(adj,wp,ws);
+      const h = d.om.marine.hourly;
+      const ni = getNowIdx(h.time);
+      const adj = (h.wave_height[ni] || 0) * d.mult;
+      ftVal = mToFt(adj);
+      const wp = h.swell_wave_period?.[ni] || 0;
+      const ws = d.om.wind?.hourly?.wind_speed_10m?.[ni] || 0;
+      const wd = d.om.wind?.hourly?.wind_direction_10m?.[ni];
+      rat = ratingStr(adj, wp, ws, wd);
     }
 
     if (ftVal) {
-      document.getElementById('ovht-'+i).innerHTML=ftVal+'<span style="font-size:10px;color:rgba(216,240,247,0.35)">ft</span>';
-      const rtEl=document.getElementById('ovrt-'+i);
-      rtEl.textContent=(rat||'').toUpperCase();
-      rtEl.style.color=rc(rat||'');
+      document.getElementById('ovht-'+i).innerHTML = ftVal+'<span style="font-size:10px;color:rgba(216,240,247,0.35)">ft</span>';
+      const rtEl = document.getElementById('ovrt-'+i);
+      rtEl.textContent = (rat||'').toUpperCase();
+      rtEl.style.color = rc(rat||'');
     }
-  } catch {}
+  } catch (e) { console.warn('overview', i, e); }
 });
 
 // ─── SELECT ───────────────────────────────────────────────────────────────────
@@ -608,21 +712,20 @@ async function renderCard(idx) {
     const sp  = SPOTS[idx];
     const now = Date.now()/1000;
 
-    // ── Wave height: Surfline preferred, Open-Meteo fallback ──
+    // ── Wave height: NDBC primary swell (measured), Open-Meteo (modeled) for forecast ──
     let htStr, htM, swellFt, swellPd, swellDirDeg, rating, dataSource, swells=[];
 
-    const slWaves = d.sl?.wave?.data?.wave;
-    if (slWaves?.length) {
-      const cur = slWaves.reduce((a,b)=>Math.abs(b.timestamp-now)<Math.abs(a.timestamp-now)?b:a);
-      htStr      = `${cur.surf.min}–${cur.surf.max}`;
-      htM        = ((cur.surf.min+cur.surf.max)/2) / 3.28084;
-      swells     = (cur.swells||[]).filter(s=>s.height>0).slice(0,3);
-      const sw   = swells[0];
-      swellFt    = sw ? sw.height.toFixed(1) : null;
-      swellPd    = sw ? sw.period : null;
-      swellDirDeg= sw ? sw.direction : null;
-      rating     = d.sl?.cond?.data?.conditions?.value || cur.surf.humanRelation || '';
-      dataSource = 'SURFLINE';
+    if (d.primary) {
+      htM         = d.primary.h;
+      htStr       = mToFt(htM);
+      swellFt     = (d.primary.h * 3.28084).toFixed(1);
+      swellPd     = d.primary.p;
+      swellDirDeg = d.primary.d;
+      swells.push({ height: d.primary.h * 3.28084, period: d.primary.p, direction: d.primary.d });
+      if (d.windWave) {
+        swells.push({ height: d.windWave.h * 3.28084, period: d.windWave.p, direction: d.windWave.d });
+      }
+      dataSource = `NDBC #${d.primaryBuoy}`;
     } else if (d.om?.marine?.hourly) {
       const h    = d.om.marine.hourly;
       const ni   = getNowIdx(h.time);
@@ -633,14 +736,20 @@ async function renderCard(idx) {
       swellFt    = mToFt(rawSw);
       swellPd    = h.swell_wave_period?.[ni]||null;
       swellDirDeg= h.swell_wave_direction?.[ni]||null;
-      const ws   = d.om.wind?.hourly?.wind_speed_10m?.[ni]||0;
-      rating     = ratingStr(htM, swellPd||0, ws);
-      dataSource = 'OPEN-METEO';
-      // Build synthetic swells array from Open-Meteo single swell
       if (swellFt) swells = [{ height: parseFloat(swellFt), period: swellPd||0, direction: swellDirDeg }];
+      dataSource = 'OPEN-METEO';
     } else {
       throw new Error('No wave data available');
     }
+
+    // Rating uses wind direction now too. NB: ratingStr expects m/s, NOT knots.
+    let rWindMs = 0, rWindDir = null;
+    if (d.om?.wind?.hourly) {
+      const wh = d.om.wind.hourly, ni = getNowIdx(wh.time);
+      rWindMs  = wh.wind_speed_10m?.[ni] || 0;
+      rWindDir = wh.wind_direction_10m?.[ni];
+    }
+    rating = ratingStr(htM, swellPd || 0, rWindMs, rWindDir);
 
     // ── Wind: Open-Meteo (more reliable) ──
     let windKt=0, windDirStr='–', gustKt=0, windDirDeg=null, wLabel='–', wLabelColor='rgba(216,240,247,0.4)';
@@ -847,21 +956,29 @@ async function renderCard(idx) {
 
     const windArrow = '<g transform="rotate('+(windDirDeg||0)+' 40 40)"><line x1="40" y1="21" x2="40" y2="37" stroke="'+wLabelColor+'" stroke-width="1.5" stroke-dasharray="2,1.5"/><polygon points="40,39 37,34 43,34" fill="'+wLabelColor+'" opacity="0.85"/></g>';
 
-    const swellInfoHtml = swells.slice(0,3).map((s,i) => {
-      const op = i===0?1:i===1?0.6:0.35;
-      const sz = i===0?'13px':i===1?'11px':'10px';
-      const label = i===0?' — PRIMARY':i===1?' — SECONDARY':' — TERTIARY';
-      return '<div style="margin-bottom:6px;opacity:'+op+'"><div class="compass-label">SW'+(i+1)+label+'</div>'
+    const swellInfoHtml = swells.slice(0,2).map((s,i) => {
+      const op = i===0?1:0.6;
+      const sz = i===0?'13px':'11px';
+      const label = i===0?'PRIMARY':'WIND-WAVE';
+      return '<div style="margin-bottom:6px;opacity:'+op+'"><div class="compass-label">'+label+'</div>'
         +'<div style="font-family:monospace;font-size:'+sz+';color:#29d9f5;font-weight:700">'
         +s.height.toFixed(1)+'ft @ '+s.period+'s '+wdir(s.direction)+'</div></div>';
-    }).join('') || '<div style="font-family:monospace;font-size:10px;color:rgba(216,240,247,0.3)">No swell data</div>';
+    }).join('') || '<div style="font-family:monospace;font-size:10px;color:rgba(216,240,247,0.3)">no swell in spot window</div>';
 
     wrap.innerHTML = `
     <div class="card">
       <div class="card-head">
         <div>
           <div class="spot-title">${sp.name}</div>
-          <div class="src-badge">${dataSource} · ${dataSource==='OPEN-METEO'?Math.round(d.mult*100)+'% NEARSHORE ADJ':'NEARSHORE MODEL'}</div>
+          <div class="src-badge">${
+            d.staleAge > 0
+              ? `${dataSource} · STALE ${d.staleAge}h`
+              : d.buoysOk === 1 && d.primary
+                ? `${dataSource} · 1/2 BUOYS · NEARSHORE ${Math.round(d.mult*100)}%`
+                : dataSource === 'OPEN-METEO'
+                  ? `OPEN-METEO · NEARSHORE ${Math.round(d.mult*100)}%`
+                  : `${dataSource} · NEARSHORE ${Math.round(d.mult*100)}%`
+          }</div>
         </div>
         <div class="rating-pill" style="color:${rc(rating)}">${(rating||'–').toUpperCase()}</div>
       </div>
@@ -881,11 +998,11 @@ async function renderCard(idx) {
           <div class="wave-human">${humanHt(htM)} · at break</div>
         </div>
         <div class="swell-col">
-          ${swells.length ? swells.slice(0,3).map((s,i) => {
-            const ops = [1, 0.55, 0.3];
-            const labels = ['PRIMARY','SECONDARY','TERTIARY'];
+          ${swells.length ? swells.slice(0,2).map((s,i) => {
+            const ops = [1, 0.55];
+            const labels = ['PRIMARY','WIND-WAVE'];
             return `<div class="swell-row" style="opacity:${ops[i]}"><div class="sw-l">${labels[i]}</div><div class="sw-v">${s.height.toFixed(1)}ft @ ${s.period}s</div><div class="sw-d">${wdir(s.direction)} <span style="opacity:0.5;font-size:8px">offshore</span></div></div>`;
-          }).join('') : ''}
+          }).join('') : '<div style="font-family:monospace;font-size:10px;color:rgba(216,240,247,0.3)">no swell in spot window</div>'}
           <div class="swell-row" style="margin-top:4px;padding-top:4px;border-top:1px solid rgba(216,240,247,0.07)"><div class="sw-l">WIND</div><div class="sw-v">${windKt}kt ${windDirStr}</div><div class="sw-d" style="color:${wLabelColor}">${wLabel}${gustKt?' ↑'+gustKt+'kt':''}</div></div>
         </div>
       </div>
@@ -898,8 +1015,8 @@ async function renderCard(idx) {
         </div>
         <div class="dcell">
           <div class="dl">PERIOD</div>
-          <div class="dv" style="font-size:${swells.length>1?'11px':'15px'}">${swells.length ? swells.slice(0,3).map(s=>typeof s.period==='number'?s.period.toFixed(0):s.period).join(' / ') : (swellPd!=null?(typeof swellPd==='number'?swellPd.toFixed(0):swellPd):'–')}<span class="du">s</span></div>
-          <div class="ds">${swells.length>1?'pri / sec / tert':wdir(swellDirDeg)+' swell'}</div>
+          <div class="dv">${swellPd != null ? (typeof swellPd === 'number' ? swellPd.toFixed(0) : swellPd) : '–'}<span class="du">s</span></div>
+          <div class="ds">${swellDirDeg != null ? wdir(swellDirDeg) + ' primary' : '–'}</div>
         </div>
         <div class="dcell">
           <div class="dl">TIDE NOW</div>
@@ -959,7 +1076,7 @@ async function renderCard(idx) {
               <div class="h-t">${i===0?'NOW':fmtHourDay(h.time)}</div>
               <div class="h-h">${h.ftStr}ft</div>
               <div class="h-w">${msToKt(h.ws)}kt ${wdir(h.wd)}</div>
-              <div class="h-d" style="background:${rc(ratingStr(h.htM,h.sp,h.ws))}"></div>
+              <div class="h-d" style="background:${rc(ratingStr(h.htM,h.sp,h.ws,h.wd))}"></div>
               <div class="h-bars">
                 <div class="h-bar-lbl">PERIOD</div>
                 <div class="h-bar-wrap"><div class="h-bar-fill" style="width:${Math.min(100,(h.sp/20)*100).toFixed(0)}%;background:#29d9f5;opacity:0.75"></div></div>
